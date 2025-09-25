@@ -10,6 +10,9 @@ export interface User {
   joinDate: string;
   // Optional password for demo/local signup users stored in localStorage
   password?: string;
+  avatarUrl?: string; // data URL stored locally
+  phone?: string;
+  bio?: string;
 }
 
 export interface Report {

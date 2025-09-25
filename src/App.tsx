@@ -10,6 +10,8 @@ import AdminAuth from "./pages/AdminAuth";
 import CitizenDashboard from "./pages/CitizenDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
 import { AuthProvider } from "./contexts/AuthContext";
+import FeedbackWidget from "./components/FeedbackWidget";
+import ThemeToggle from "./components/ThemeToggle";
 
 const queryClient = new QueryClient();
 
@@ -30,6 +32,10 @@ const App = () => (
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
+        <FeedbackWidget />
+        <div className="fixed bottom-5 left-5 z-50">
+          <ThemeToggle />
+        </div>
       </TooltipProvider>
     </AuthProvider>
   </QueryClientProvider>

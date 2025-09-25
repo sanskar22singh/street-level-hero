@@ -17,13 +17,15 @@ import {
   Settings,
   TrendingUp,
   FileText,
-  UserCheck
+  UserCheck,
+  Bot
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { mockContractors } from "@/lib/mockData";
 import { Report, Contractor } from "@/types";
+import ReportAnalysisChatbot from "@/components/ReportAnalysisChatbot";
 import { MapContainer, TileLayer, Circle, Marker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -31,7 +33,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cel
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, isLoading } = useAuth();
   const { toast } = useToast();
   
   const [reports, setReports] = useState<Report[]>([]);
@@ -47,27 +49,52 @@ const AdminDashboard = () => {
   });
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [isChatbotOpen, setIsChatbotOpen] = useState(false);
+  const [reportFlags, setReportFlags] = useState<Record<string, { isFake: boolean; confidence: number; reasons: string[] }>>({});
 
   useEffect(() => {
+    // Wait for auth to resolve before guarding
+    if (isLoading) return;
     if (!user || user.role !== 'admin') {
       navigate('/admin/auth');
       return;
     }
-    // Load reports strictly from localStorage (user-submitted)
+    // Load reports strictly from localStorage (user-submitted only) and clean any demo data remnants
     try {
       const storedRaw = localStorage.getItem('roadReportUserReports');
       const storedReports: Report[] = storedRaw ? JSON.parse(storedRaw) : [];
-      setReports(storedReports);
+      const demoIds = new Set(['1','2','3']);
+      const looksLikeDemo = (r: Report) => {
+        // Real uploads in this app are data URLs; mock had file names like pothole1.jpg
+        const hasNonDataImages = Array.isArray(r.images) && r.images.some((src) => typeof src === 'string' && !src.startsWith('data:'));
+        const knownNames = r.citizenName === 'Sarah Johnson' || r.citizenName === 'Mike Chen';
+        return demoIds.has(String(r.id)) || hasNonDataImages || knownNames;
+      };
+      const cleaned = storedReports.filter(r => !looksLikeDemo(r));
+      setReports(cleaned);
+      if (cleaned.length !== storedReports.length) {
+        try { localStorage.setItem('roadReportUserReports', JSON.stringify(cleaned)); } catch {}
+      }
     } catch {
       setReports([]);
     }
-    // Load contractors strictly from localStorage (genuine only). If none, start empty (no demo)
+    // Load contractors from localStorage, merge with mock data if none exist
     try {
       const contractorsRaw = localStorage.getItem('roadReportContractors');
       const storedContractors: Contractor[] = contractorsRaw ? JSON.parse(contractorsRaw) : [];
-      setContractors(storedContractors);
+      
+      // If no contractors exist, initialize with mock data
+      if (storedContractors.length === 0) {
+        const initialContractors = [...mockContractors];
+        setContractors(initialContractors);
+        try { localStorage.setItem('roadReportContractors', JSON.stringify(initialContractors)); } catch {}
+      } else {
+        setContractors(storedContractors);
+      }
     } catch {
-      setContractors([]);
+      // Fallback to mock contractors if parsing fails
+      setContractors([...mockContractors]);
+      try { localStorage.setItem('roadReportContractors', JSON.stringify(mockContractors)); } catch {}
     }
     const onStorage = (e: StorageEvent) => {
       if (e.key === 'roadReportUserReports') {
@@ -96,7 +123,15 @@ const AdminDashboard = () => {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [user, navigate]);
+  }, [user, isLoading, navigate]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-muted-foreground">Loading admin…</div>
+      </div>
+    );
+  }
 
   if (!user) return null;
 
@@ -137,6 +172,32 @@ const AdminDashboard = () => {
       title: "Contractor Assigned",
       description: `${contractorName} has been assigned to the report`,
     });
+  };
+
+  const handleDeleteReport = (reportId: string) => {
+    const confirmed = window.confirm('Are you sure you want to delete this report?');
+    if (!confirmed) return;
+    setReports(prev => {
+      const updated = prev.filter(r => r.id !== reportId);
+      try {
+        localStorage.setItem('roadReportUserReports', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    toast({ title: 'Report deleted', description: 'The report has been removed.' });
+  };
+
+  const handleAnalysisComplete = (analysis: { isFake: boolean; confidence: number; reasons: string[] }) => {
+    if (selectedReport) {
+      setReportFlags(prev => ({
+        ...prev,
+        [selectedReport.id]: analysis
+      }));
+    }
+  };
+
+  const getReportFlag = (reportId: string) => {
+    return reportFlags[reportId] || { isFake: false, confidence: 0, reasons: [] };
   };
 
   // Analytics data
@@ -276,7 +337,7 @@ const AdminDashboard = () => {
 
         {/* Main Content Tabs */}
         <Tabs defaultValue="reports" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 lg:w-fit">
+          <TabsList className="grid w-full grid-cols-5 lg:w-fit">
             <TabsTrigger value="reports" className="flex items-center gap-2">
               <FileText className="w-4 h-4" />
               Reports
@@ -292,6 +353,10 @@ const AdminDashboard = () => {
             <TabsTrigger value="contractors" className="flex items-center gap-2">
               <UserCheck className="w-4 h-4" />
               Contractors
+            </TabsTrigger>
+            <TabsTrigger value="ai-analysis" className="flex items-center gap-2 bg-gradient-to-r from-blue-50 to-purple-50 text-blue-700 font-semibold border-blue-200 data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-600 data-[state=active]:to-purple-600 data-[state=active]:text-white">
+              <Bot className="w-4 h-4" />
+              🤖 AI Analysis
             </TabsTrigger>
           </TabsList>
 
@@ -323,6 +388,7 @@ const AdminDashboard = () => {
                         <th className="text-left p-4">Type</th>
                         <th className="text-left p-4">Severity</th>
                         <th className="text-left p-4">Status</th>
+                        <th className="text-left p-4">AI Flag</th>
                         <th className="text-left p-4">Contractor</th>
                         <th className="text-left p-4">Actions</th>
                       </tr>
@@ -365,6 +431,22 @@ const AdminDashboard = () => {
                             </Select>
                           </td>
                           <td className="p-4">
+                            {(() => {
+                              const flag = getReportFlag(report.id);
+                              if (flag.confidence === 0) {
+                                return <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 font-medium">⚠️ Not Analyzed</Badge>;
+                              }
+                              return (
+                                <Badge 
+                                  className={flag.isFake ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"}
+                                  title={flag.reasons.join(', ')}
+                                >
+                                  {flag.isFake ? 'Fake' : 'Real'} ({flag.confidence}%)
+                                </Badge>
+                              );
+                            })()}
+                          </td>
+                          <td className="p-4">
                             <Select
                               value={report.assignedContractor || ""}
                               onValueChange={(value) => handleAssignContractor(report.id, value)}
@@ -382,16 +464,37 @@ const AdminDashboard = () => {
                             </Select>
                           </td>
                           <td className="p-4">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedReport(report);
-                                setIsDetailsOpen(true);
-                              }}
-                            >
-                              View Details
-                            </Button>
+                            <div className="flex gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedReport(report);
+                                  setIsDetailsOpen(true);
+                                }}
+                              >
+                                View Details
+                              </Button>
+                              <Button
+                                variant="default"
+                                size="sm"
+                                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold shadow-lg hover:shadow-xl transition-all duration-200 border-0"
+                                onClick={() => {
+                                  setSelectedReport(report);
+                                  setIsChatbotOpen(true);
+                                }}
+                              >
+                                <Bot className="w-4 h-4 mr-2" />
+                                🤖 AI Analyze
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => handleDeleteReport(report.id)}
+                              >
+                                Delete
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -451,7 +554,22 @@ const AdminDashboard = () => {
                           <p className="text-sm text-muted-foreground mb-2">Photos</p>
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                             {selectedReport.images.map((src, idx) => (
-                              <img key={idx} src={src} alt={`report-${idx}`} className="w-full h-32 object-cover rounded-md border" />
+                              <img
+                                key={idx}
+                                src={src}
+                                alt={`report-${idx}`}
+                                className="w-full h-32 object-cover rounded-md border"
+                                onError={(e) => {
+                                  const target = e.currentTarget as HTMLImageElement;
+                                  // Simple gray placeholder SVG
+                                  target.onerror = null;
+                                  target.src =
+                                    'data:image/svg+xml;utf8,' +
+                                    encodeURIComponent(
+                                      `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="100%" height="100%" fill="#f3f4f6"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#6b7280" font-family="Arial, sans-serif" font-size="14">Image not available</text></svg>`
+                                    );
+                                }}
+                              />
                             ))}
                           </div>
                         </div>
@@ -461,7 +579,24 @@ const AdminDashboard = () => {
                           <p className="text-sm text-muted-foreground mb-2">Videos</p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             {selectedReport.videos.map((src, idx) => (
-                              <video key={idx} src={src} className="w-full h-48 object-cover rounded-md border" controls preload="metadata" />
+                              <video
+                                key={idx}
+                                src={src}
+                                className="w-full h-48 object-cover rounded-md border"
+                                controls
+                                preload="metadata"
+                                onError={(e) => {
+                                  // Replace failed video with a placeholder block
+                                  const el = e.currentTarget as HTMLVideoElement;
+                                  const wrapper = document.createElement('div');
+                                  wrapper.className = el.className;
+                                  wrapper.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#f3f4f6;color:#6b7280;border-radius:0.375rem;border:1px solid #e5e7eb;">Video not available</div>';
+                                  const parent = el.parentElement;
+                                  if (parent) {
+                                    parent.replaceChild(wrapper, el);
+                                  }
+                                }}
+                              />
                             ))}
                           </div>
                         </div>
@@ -508,9 +643,14 @@ const AdminDashboard = () => {
                         attribution='&copy; OpenStreetMap &copy; CARTO'
                         url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
                       />
-                      <FitBounds points={reports.filter(r => r.location && (r.location.lat || r.location.lng)).map(r => ({ lat: r.location.lat || 0, lng: r.location.lng || 0 }))} />
+                      <FitBounds
+                        points={reports
+                          .filter(r => typeof r.location?.lat === 'number' && typeof r.location?.lng === 'number')
+                          .map(r => ({ lat: r.location.lat as number, lng: r.location.lng as number }))
+                          .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng) && !(p.lat === 0 && p.lng === 0))}
+                      />
                       {reports.map((r) => (
-                        (typeof r.location?.lat === 'number' && typeof r.location?.lng === 'number') ? (
+                        (typeof r.location?.lat === 'number' && typeof r.location?.lng === 'number' && Number.isFinite(r.location.lat) && Number.isFinite(r.location.lng) && !(r.location.lat === 0 && r.location.lng === 0)) ? (
                           <>
                             <Marker key={r.id} position={{ lat: r.location.lat, lng: r.location.lng }} icon={MarkerIcon as any} />
                             {r.severity && (
@@ -738,7 +878,91 @@ const AdminDashboard = () => {
               </Card>
             </motion.div>
           </TabsContent>
+
+          {/* AI Analysis Tab */}
+          <TabsContent value="ai-analysis">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              <Card className="p-6">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent flex items-center gap-2">
+                    🤖 AI Report Analysis
+                  </h2>
+                  <div className="flex gap-4">
+                    <Badge variant="outline" className="text-red-600">
+                      {Object.values(reportFlags).filter(f => f.isFake).length} Flagged as Fake
+                    </Badge>
+                    <Badge variant="outline" className="text-green-600">
+                      {Object.values(reportFlags).filter(f => !f.isFake && f.confidence > 0).length} Verified Real
+                    </Badge>
+                  </div>
+                </div>
+                
+                <div className="space-y-4">
+                  <p className="text-muted-foreground">
+                    Select a report to analyze with AI. The system will automatically detect fake reports 
+                    based on content patterns, timing, location validity, and other heuristics.
+                  </p>
+                  
+                  <div className="grid gap-4">
+                    {reports.map((report) => {
+                      const flag = getReportFlag(report.id);
+                      return (
+                        <Card key={report.id} className="p-4 hover:bg-muted/50 cursor-pointer"
+                          onClick={() => {
+                            setSelectedReport(report);
+                            setIsChatbotOpen(true);
+                          }}
+                        >
+                          <div className="flex justify-between items-start">
+                            <div className="flex-1">
+                              <h3 className="font-semibold">{report.title}</h3>
+                              <p className="text-sm text-muted-foreground">{report.citizenName} • {report.type}</p>
+                              <p className="text-xs text-muted-foreground mt-1">{report.description.substring(0, 100)}...</p>
+                            </div>
+                            <div className="ml-4">
+                              {flag.confidence === 0 ? (
+                                <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 font-medium">⚠️ Not Analyzed</Badge>
+                              ) : (
+                                <Badge 
+                                  className={flag.isFake ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"}
+                                >
+                                  {flag.isFake ? 'Fake' : 'Real'} ({flag.confidence}%)
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                </div>
+              </Card>
+            </motion.div>
+          </TabsContent>
         </Tabs>
+
+        {/* AI Chatbot Dialog */}
+        <Dialog open={isChatbotOpen} onOpenChange={setIsChatbotOpen}>
+          <DialogContent className="max-w-4xl max-h-[80vh]">
+            <DialogHeader>
+              <DialogTitle>AI Report Analysis</DialogTitle>
+              <DialogDescription>
+                Analyze "{selectedReport?.title}" for authenticity using AI heuristics.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="flex-1 overflow-hidden">
+              <ReportAnalysisChatbot
+                report={selectedReport}
+                onAnalysisComplete={handleAnalysisComplete}
+                onClose={() => setIsChatbotOpen(false)}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

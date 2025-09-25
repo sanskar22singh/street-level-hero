@@ -199,7 +199,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updateUser: AuthContextType['updateUser'] = (updates) => {
     setUser(prev => {
       if (!prev) return prev;
-      const updatedUser: User = { ...prev, ...updates };
+      const preMerge: User = { ...prev, ...updates };
+      // Award special badge and blue tick at 150+ points
+      const reachedMilestone = (preMerge.points || 0) >= 150;
+      const badges = new Set(preMerge.badges || []);
+      if (reachedMilestone) {
+        badges.add('blue_tick');
+        badges.add('special_1000');
+      }
+      const updatedUser: User = { ...preMerge, badges: Array.from(badges) };
       // Persist session user
       localStorage.setItem('roadReportUser', JSON.stringify(updatedUser));
 
@@ -207,7 +215,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const users = getStoredUsers();
       const idx = users.findIndex(u => u.id === updatedUser.id);
       if (idx !== -1) {
-        users[idx] = { ...users[idx], ...updates } as User;
+        const pre: User = { ...users[idx], ...updates } as User;
+        const b = new Set(pre.badges || []);
+        if ((pre.points || 0) >= 150) { b.add('blue_tick'); b.add('special_1000'); }
+        users[idx] = { ...pre, badges: Array.from(b) } as User;
         setStoredUsers(users);
       }
 

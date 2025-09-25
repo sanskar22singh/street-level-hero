@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -22,12 +23,13 @@ import {
   FileText,
   Award,
   Target,
-  Zap
+  Zap,
+  UserCircle
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { getProgressToNextLevel, calculateLevel, getPointsForSeverity } from "@/lib/mockData";
+import { getProgressToNextLevel, calculateLevel, getPointsForSeverity, getBadgeForReport } from "@/lib/mockData";
 import { MapContainer, TileLayer, Marker, Circle, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -126,6 +128,45 @@ const CitizenDashboard = () => {
     setIsSubmitting(true);
 
     try {
+      // Resolve coordinates: prefer picked point; else parse; else geocode (bias India)
+      const parseLatLng = (text: string): { lat: number; lng: number } | null => {
+        const m = text.match(/\s*([+-]?\d+\.?\d*)\s*,\s*([+-]?\d+\.?\d*)\s*/);
+        if (!m) return null;
+        const lat = parseFloat(m[1]);
+        const lng = parseFloat(m[2]);
+        return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+      };
+
+      const geocodeAddress = async (query: string): Promise<{ lat: number; lng: number } | null> => {
+        const tryFetch = async (url: string) => {
+          const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+          if (!res.ok) return null;
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const lat = parseFloat(data[0].lat);
+            const lng = parseFloat(data[0].lon);
+            if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+          }
+          return null;
+        };
+        // Bias to India first
+        const encoded = encodeURIComponent(query);
+        const inUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encoded}&limit=1&addressdetails=1&countrycodes=in`;
+        const globalUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encoded}&limit=1&addressdetails=1`;
+        return (await tryFetch(inUrl)) || (await tryFetch(globalUrl));
+      };
+
+      let coords: { lat: number; lng: number } | null = null;
+      if (selectedLatLng) {
+        coords = selectedLatLng;
+      } else {
+        coords = parseLatLng(newReport.location) || (await geocodeAddress(newReport.location));
+        if (coords) {
+          setSelectedLatLng(coords);
+          setLocalityName(newReport.location);
+        }
+      }
+
       // Create report and persist
       const now = new Date().toISOString();
       const points = newReport.severity ? getPointsForSeverity(newReport.severity as Report['severity']) : 50;
@@ -140,8 +181,8 @@ const CitizenDashboard = () => {
         severity: (newReport.severity || 'low') as Report['severity'],
         status: 'submitted',
         location: {
-          lat: selectedLatLng ? selectedLatLng.lat : 0,
-          lng: selectedLatLng ? selectedLatLng.lng : 0,
+          lat: coords ? coords.lat : 0,
+          lng: coords ? coords.lng : 0,
           address: newReport.location,
         },
         images: photoDataUrls,
@@ -169,18 +210,26 @@ const CitizenDashboard = () => {
 
       setReports(prev => [...prev, created]);
 
+      if (!coords) {
+        toast({ title: 'Location Saved Without Coordinates', description: 'We could not resolve the address to a map location. You can edit and pin it later.', variant: 'destructive' });
+      } else {
+        toast({ title: 'Location Resolved', description: `Pinned at ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}` });
+      }
+
       // Update user points and badges
       const newTotalPoints = (user.points || 0) + points;
+      
+      // Determine which badge to award for this report
+      const newBadge = getBadgeForReport(created, reports);
       const earnedBadges: string[] = [];
-      if (!user.badges.includes('first_report') && (reports.length + 1) === 1) {
-        earnedBadges.push('first_report');
-      }
-      if (points >= 150 && !user.badges.includes('detail_oriented')) {
-        earnedBadges.push('detail_oriented');
+      
+      if (newBadge && !user.badges.includes(newBadge)) {
+        earnedBadges.push(newBadge);
       }
 
       const nextLevel = calculateLevel(newTotalPoints);
       const updatedBadges = Array.from(new Set([...user.badges, ...earnedBadges]));
+      // updateUser will auto-award blue_tick and special_1000 at 150+ points
       updateUser({ points: newTotalPoints, level: nextLevel, badges: updatedBadges });
 
     toast({
@@ -443,6 +492,27 @@ const CitizenDashboard = () => {
     fetchLocality();
   }, [selectedLatLng]);
 
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState<{ avatarUrl?: string; phone?: string; bio?: string }>({
+    avatarUrl: user.avatarUrl,
+    phone: user.phone || '',
+    bio: user.bio || '',
+  });
+
+  const onAvatarSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setProfileDraft(d => ({ ...d, avatarUrl: String(reader.result) }));
+    reader.readAsDataURL(file);
+  };
+
+  const saveProfile = () => {
+    updateUser({ avatarUrl: profileDraft.avatarUrl, phone: profileDraft.phone, bio: profileDraft.bio });
+    toast({ title: 'Profile updated' });
+    setProfileOpen(false);
+  };
+
   const progress = getProgressToNextLevel(user.points);
   const statusColors = {
     submitted: "bg-blue-100 text-blue-800",
@@ -465,16 +535,30 @@ const CitizenDashboard = () => {
             </div>
             
             <div className="flex items-center gap-4">
+              <button
+                className="flex items-center gap-2 rounded-full border px-2 py-1 hover:bg-muted"
+                onClick={() => setProfileOpen(true)}
+                title="Edit profile"
+              >
+                {user.avatarUrl ? (
+                  <img src={user.avatarUrl} alt="avatar" className="w-8 h-8 rounded-full border" />
+                ) : (
+                  <UserCircle className="w-8 h-8" />
+                )}
+                <span className="hidden sm:inline text-sm">Profile</span>
+              </button>
               <Button variant="outline" size="sm" onClick={() => navigate('/admin/auth')}>
                 Admin Portal
               </Button>
               <div className="text-right">
                 <p className="text-sm text-muted-foreground">Welcome back,</p>
-                <p className="font-semibold">{user.name}</p>
+                <p className="font-semibold flex items-center gap-1 justify-end">
+                  {user.name}
+                  {user.badges.includes('blue_tick') && (
+                    <span title="Verified (1000+ pts)">✔️</span>
+                  )}
+                </p>
               </div>
-              <Button variant="ghost" size="sm" onClick={handleLogout}>
-                <LogOut className="w-4 h-4" />
-              </Button>
             </div>
           </div>
         </div>
@@ -558,12 +642,11 @@ const CitizenDashboard = () => {
           <Button variant={activeTab === 'report' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('report')}>Report Issue</Button>
           <Button variant={activeTab === 'my-reports' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('my-reports')}>My Reports</Button>
           <Button variant={activeTab === 'leaderboard' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('leaderboard')}>Leaderboard</Button>
-          <Button variant={activeTab === 'profile' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('profile')}>Badges & Points</Button>
         </div>
 
         {/* Main Content Tabs */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 lg:w-fit">
+          <TabsList className="grid w-full grid-cols-3 lg:w-fit">
             <TabsTrigger value="report" className="flex items-center gap-2">
               <Target className="w-4 h-4" />
               Report Issue
@@ -575,10 +658,6 @@ const CitizenDashboard = () => {
             <TabsTrigger value="leaderboard" className="flex items-center gap-2">
               <Trophy className="w-4 h-4" />
               Leaderboard
-            </TabsTrigger>
-            <TabsTrigger value="profile" className="flex items-center gap-2">
-              <Award className="w-4 h-4" />
-              Profile
             </TabsTrigger>
           </TabsList>
 
@@ -630,10 +709,10 @@ const CitizenDashboard = () => {
                           <SelectValue placeholder="Select severity" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="low">🟢 Low Priority (+50 pts)</SelectItem>
+                          <SelectItem value="low">🟢 Low Priority (+100 pts)</SelectItem>
                           <SelectItem value="medium">🟡 Medium Priority (+100 pts)</SelectItem>
-                          <SelectItem value="high">🟠 High Priority (+150 pts)</SelectItem>
-                          <SelectItem value="critical">🔴 Critical (+200 pts)</SelectItem>
+                          <SelectItem value="high">🟠 High Priority (+100 pts)</SelectItem>
+                          <SelectItem value="critical">🔴 Critical (+100 pts)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -920,72 +999,101 @@ const CitizenDashboard = () => {
             </motion.div>
           </TabsContent>
 
-          {/* Profile Tab */}
-          <TabsContent value="profile">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-            >
-              <Card className="p-6">
-                <h2 className="text-2xl font-bold mb-6">Profile & Achievements</h2>
-                
-                <div className="grid md:grid-cols-2 gap-8">
-                  <div>
-                    <h3 className="text-lg font-semibold mb-4">Profile Information</h3>
-                    <div className="space-y-4">
-                      <div>
-                        <Label>Name</Label>
-                        <p className="text-foreground font-medium">{user.name}</p>
-                      </div>
-                      <div>
-                        <Label>Email</Label>
-                        <p className="text-muted-foreground">{user.email}</p>
-                      </div>
-                      <div>
-                        <Label>City</Label>
-                        <p className="text-muted-foreground">{user.city}</p>
-                      </div>
-                      <div>
-                        <Label>Member Since</Label>
-                        <p className="text-muted-foreground">
-                          {new Date(user.joinDate).toLocaleDateString()}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <h3 className="text-lg font-semibold mb-4">Earned Badges</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      {user.badges.map((badge, index) => (
-                        <div key={badge} className="glass p-4 rounded-lg text-center">
-                          <div className="text-2xl mb-2">
-                            {badge === 'first_report' ? '🎯' :
-                             badge === 'quick_reporter' ? '⚡' :
-                             badge === 'community_hero' ? '🏆' : '🎖️'}
-                          </div>
-                          <p className="text-sm font-medium">
-                            {badge.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                          </p>
-                        </div>
-                      ))}
-                      
-                      {user.badges.length === 0 && (
-                        <div className="col-span-2 text-center py-8">
-                          <Award className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                          <p className="text-muted-foreground">
-                            No badges earned yet. Keep reporting to unlock achievements!
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            </motion.div>
-          </TabsContent>
         </Tabs>
       </div>
+      {/* Profile Dialog */}
+      <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Profile</DialogTitle>
+            <DialogDescription>Update your profile picture and basic information.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <div className="relative">
+                {profileDraft.avatarUrl ? (
+                  <img src={profileDraft.avatarUrl} alt="avatar" className="w-16 h-16 rounded-full border" />
+                ) : (
+                  <UserCircle className="w-16 h-16" />
+                )}
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  onChange={onAvatarSelected}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg">{user.name}</h3>
+                <p className="text-sm text-muted-foreground">Click photo to change</p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Phone</Label>
+              <Input value={profileDraft.phone} onChange={(e)=>setProfileDraft(d=>({...d, phone: e.target.value}))} placeholder="e.g. +91 98765 43210" />
+            </div>
+            <div className="space-y-2">
+              <Label>About you</Label>
+              <Textarea value={profileDraft.bio} onChange={(e)=>setProfileDraft(d=>({...d, bio: e.target.value}))} rows={3} placeholder="Short bio" />
+            </div>
+            
+            {/* Badges Section */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold">Earned Badges</h3>
+              <div className="grid grid-cols-2 gap-3">
+                {user.badges.map((badge, index) => (
+                  <div key={badge} className="glass p-3 rounded-lg text-center">
+                    <div className="text-xl mb-1">
+                      {badge === 'first_report' ? '🎯' :
+                       badge === 'quick_reporter' ? '⚡' :
+                       badge === 'community_hero' ? '🏆' :
+                       badge === 'photo_master' ? '📸' :
+                       badge === 'detail_oriented' ? '🔍' :
+                       badge === 'pothole_hunter' ? '🕳️' :
+                       badge === 'light_keeper' ? '💡' :
+                       badge === 'traffic_guardian' ? '🚦' :
+                       badge === 'drainage_expert' ? '🌊' :
+                       badge === 'safety_champion' ? '🛡️' :
+                       badge === 'early_bird' ? '🌅' :
+                       badge === 'night_owl' ? '🦉' :
+                       badge === 'weekend_warrior' ? '⚔️' :
+                       badge === 'high_priority' ? '🔴' :
+                       badge === 'critical_eye' ? '🚨' :
+                       badge === 'location_master' ? '📍' :
+                       badge === 'video_director' ? '🎬' :
+                       badge === 'consistency_king' ? '👑' :
+                       badge === 'blue_tick' ? '✔️' :
+                       badge === 'special_1000' ? '💎' : '🎖️'}
+                    </div>
+                    <p className="text-xs font-medium">
+                      {badge.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                    </p>
+                  </div>
+                ))}
+                
+                {user.badges.length === 0 && (
+                  <div className="col-span-2 text-center py-4">
+                    <Award className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">
+                      No badges earned yet. Keep reporting to unlock achievements!
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="flex justify-between">
+            <Button variant="destructive" onClick={handleLogout}>
+              <LogOut className="w-4 h-4 mr-2" />
+              Logout
+            </Button>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={()=>setProfileOpen(false)}>Cancel</Button>
+              <Button onClick={saveProfile}>Save</Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

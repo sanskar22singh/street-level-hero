@@ -161,6 +161,96 @@ export const mockBadges: Badge[] = [
     name: 'Detail Oriented',
     description: 'Provided detailed descriptions in 15+ reports',
     icon: '🔍'
+  },
+  {
+    id: 'pothole_hunter',
+    name: 'Pothole Hunter',
+    description: 'Reported a pothole issue',
+    icon: '🕳️'
+  },
+  {
+    id: 'light_keeper',
+    name: 'Light Keeper',
+    description: 'Reported a street light issue',
+    icon: '💡'
+  },
+  {
+    id: 'traffic_guardian',
+    name: 'Traffic Guardian',
+    description: 'Reported a traffic signal issue',
+    icon: '🚦'
+  },
+  {
+    id: 'drainage_expert',
+    name: 'Drainage Expert',
+    description: 'Reported a drainage issue',
+    icon: '🌊'
+  },
+  {
+    id: 'safety_champion',
+    name: 'Safety Champion',
+    description: 'Reported a safety hazard',
+    icon: '🛡️'
+  },
+  {
+    id: 'early_bird',
+    name: 'Early Bird',
+    description: 'Submitted a report in the morning',
+    icon: '🌅'
+  },
+  {
+    id: 'night_owl',
+    name: 'Night Owl',
+    description: 'Submitted a report in the evening',
+    icon: '🦉'
+  },
+  {
+    id: 'weekend_warrior',
+    name: 'Weekend Warrior',
+    description: 'Submitted a report on weekend',
+    icon: '⚔️'
+  },
+  {
+    id: 'high_priority',
+    name: 'High Priority',
+    description: 'Reported a high severity issue',
+    icon: '🔴'
+  },
+  {
+    id: 'critical_eye',
+    name: 'Critical Eye',
+    description: 'Reported a critical severity issue',
+    icon: '🚨'
+  },
+  {
+    id: 'location_master',
+    name: 'Location Master',
+    description: 'Provided precise location details',
+    icon: '📍'
+  },
+  {
+    id: 'video_director',
+    name: 'Video Director',
+    description: 'Included video evidence in report',
+    icon: '🎬'
+  },
+  {
+    id: 'consistency_king',
+    name: 'Consistency King',
+    description: 'Submitted 5 reports in a row',
+    icon: '👑'
+  },
+  {
+    id: 'blue_tick',
+    name: 'Verified Citizen',
+    description: 'Earned 150+ points and verified status',
+    icon: '✔️'
+  },
+  {
+    id: 'special_1000',
+    name: 'Diamond Member',
+    description: 'Earned 150+ points - special achievement',
+    icon: '💎'
   }
 ];
 
@@ -209,13 +299,8 @@ export const mockLeaderboard: LeaderboardEntry[] = [
 
 // Helper functions for game mechanics
 export const getPointsForSeverity = (severity: Report['severity']): number => {
-  const points = {
-    low: 50,
-    medium: 100,
-    high: 150,
-    critical: 200
-  };
-  return points[severity];
+  // All severity levels now give 100 points
+  return 100;
 };
 
 export const getLevelRequirements = () => ({
@@ -243,4 +328,58 @@ export const getProgressToNextLevel = (points: number) => {
     required: 1000, 
     percentage: (points / 1000) * 100 
   };
+};
+
+// Function to determine which badge to award for a report submission
+export const getBadgeForReport = (report: Partial<Report>, userReports: Report[]): string | null => {
+  const currentHour = new Date().getHours();
+  const currentDay = new Date().getDay();
+  const isWeekend = currentDay === 0 || currentDay === 6;
+  
+  // Priority-based badge selection (one badge per submission)
+  const badgeOptions: Array<{ id: string; condition: boolean; priority: number }> = [
+    // First report (highest priority)
+    { id: 'first_report', condition: userReports.length === 0, priority: 1 },
+    
+    // Type-based badges
+    { id: 'pothole_hunter', condition: report.type === 'pothole', priority: 2 },
+    { id: 'light_keeper', condition: report.type === 'streetlight', priority: 2 },
+    { id: 'traffic_guardian', condition: report.type === 'traffic_signal', priority: 2 },
+    { id: 'drainage_expert', condition: report.type === 'drainage', priority: 2 },
+    { id: 'safety_champion', condition: report.type === 'safety_hazard', priority: 2 },
+    
+    // Severity-based badges
+    { id: 'critical_eye', condition: report.severity === 'critical', priority: 3 },
+    { id: 'high_priority', condition: report.severity === 'high', priority: 4 },
+    
+    // Time-based badges
+    { id: 'early_bird', condition: currentHour >= 5 && currentHour < 12, priority: 5 },
+    { id: 'night_owl', condition: currentHour >= 18 || currentHour < 5, priority: 5 },
+    { id: 'weekend_warrior', condition: isWeekend, priority: 5 },
+    
+    // Media-based badges
+    { id: 'video_director', condition: report.videos && report.videos.length > 0, priority: 6 },
+    { id: 'location_master', condition: report.location && report.location.lat && report.location.lng, priority: 7 },
+    
+    // Consistency badge (check if user has submitted 5 reports in a row)
+    { 
+      id: 'consistency_king', 
+      condition: userReports.length >= 4 && userReports.slice(-4).every(r => 
+        new Date(r.submittedAt).getTime() > new Date().getTime() - (5 * 24 * 60 * 60 * 1000)
+      ), 
+      priority: 8 
+    },
+    
+    // Fallback badges for any report
+    { id: 'detail_oriented', condition: report.description && report.description.length > 100, priority: 9 },
+    { id: 'photo_master', condition: report.images && report.images.length > 0, priority: 10 },
+  ];
+  
+  // Find the highest priority badge that meets its condition
+  const eligibleBadges = badgeOptions.filter(badge => badge.condition);
+  if (eligibleBadges.length === 0) return null;
+  
+  // Sort by priority (lower number = higher priority) and return the first one
+  eligibleBadges.sort((a, b) => a.priority - b.priority);
+  return eligibleBadges[0].id;
 };
