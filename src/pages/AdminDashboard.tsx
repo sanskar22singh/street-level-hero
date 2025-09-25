@@ -35,11 +35,11 @@ const AdminDashboard = () => {
   const { toast } = useToast();
   
   const [reports, setReports] = useState<Report[]>([]);
-  const [contractors, setContractors] = useState<Contractor[]>(mockContractors);
+  const [contractors, setContractors] = useState<Contractor[]>([]);
   const [contractorSearch, setContractorSearch] = useState("");
   const [newContractor, setNewContractor] = useState({
     name: "",
-    email: "",
+    phone: "",
     specializations: "",
     rating: 4.5,
     completedJobs: 0,
@@ -61,6 +61,41 @@ const AdminDashboard = () => {
     } catch {
       setReports([]);
     }
+    // Load contractors strictly from localStorage (genuine only). If none, start empty (no demo)
+    try {
+      const contractorsRaw = localStorage.getItem('roadReportContractors');
+      const storedContractors: Contractor[] = contractorsRaw ? JSON.parse(contractorsRaw) : [];
+      setContractors(storedContractors);
+    } catch {
+      setContractors([]);
+    }
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'roadReportUserReports') {
+        try {
+          const next: Report[] = e.newValue ? JSON.parse(e.newValue) : [];
+          setReports(next);
+        } catch {
+          // ignore parse errors
+        }
+      }
+    };
+    const refreshFromLocalStorage = () => {
+      try {
+        const raw = localStorage.getItem('roadReportUserReports');
+        const parsed: Report[] = raw ? JSON.parse(raw) : [];
+        setReports(parsed);
+      } catch {}
+    };
+    const onFocus = () => refreshFromLocalStorage();
+    const onVisibility = () => { if (!document.hidden) refreshFromLocalStorage(); };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [user, navigate]);
 
   if (!user) return null;
@@ -71,9 +106,15 @@ const AdminDashboard = () => {
   };
 
   const handleStatusUpdate = (reportId: string, newStatus: string) => {
-    setReports(prev => prev.map(report => 
-      report.id === reportId ? { ...report, status: newStatus as Report['status'] } : report
-    ));
+    setReports(prev => {
+      const updated = prev.map(report => 
+        report.id === reportId ? { ...report, status: newStatus as Report['status'] } : report
+      );
+      try {
+        localStorage.setItem('roadReportUserReports', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
     
     toast({
       title: "Status Updated",
@@ -82,9 +123,15 @@ const AdminDashboard = () => {
   };
 
   const handleAssignContractor = (reportId: string, contractorName: string) => {
-    setReports(prev => prev.map(report => 
-      report.id === reportId ? { ...report, assignedContractor: contractorName } : report
-    ));
+    setReports(prev => {
+      const updated = prev.map(report => 
+        report.id === reportId ? { ...report, assignedContractor: contractorName } : report
+      );
+      try {
+        localStorage.setItem('roadReportUserReports', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
     
     toast({
       title: "Contractor Assigned",
@@ -582,28 +629,32 @@ const AdminDashboard = () => {
                     <p className="text-sm text-muted-foreground">Add Contractor</p>
                     <div className="grid grid-cols-2 gap-2">
                       <input className="border rounded px-2 py-1 bg-background" placeholder="Name" value={newContractor.name} onChange={(e)=>setNewContractor({...newContractor, name:e.target.value})} />
-                      <input className="border rounded px-2 py-1 bg-background" placeholder="Email" value={newContractor.email} onChange={(e)=>setNewContractor({...newContractor, email:e.target.value})} />
+                      <input className="border rounded px-2 py-1 bg-background" placeholder="Phone" type="tel" value={newContractor.phone} onChange={(e)=>setNewContractor({...newContractor, phone:e.target.value})} />
                       <input className="border rounded px-2 py-1 bg-background col-span-2" placeholder="Specializations (comma)" value={newContractor.specializations} onChange={(e)=>setNewContractor({...newContractor, specializations:e.target.value})} />
                       <input className="border rounded px-2 py-1 bg-background" placeholder="Rating" type="number" min={1} max={5} step={0.1} value={newContractor.rating} onChange={(e)=>setNewContractor({...newContractor, rating: Number(e.target.value)})} />
                       <input className="border rounded px-2 py-1 bg-background" placeholder="Completed Jobs" type="number" min={0} step={1} value={newContractor.completedJobs} onChange={(e)=>setNewContractor({...newContractor, completedJobs: Number(e.target.value)})} />
                       <input className="border rounded px-2 py-1 bg-background" placeholder="Avg Days" type="number" min={0} step={0.1} value={newContractor.avgCompletionTime} onChange={(e)=>setNewContractor({...newContractor, avgCompletionTime: Number(e.target.value)})} />
                       <Button
                         onClick={() => {
-                          if (!newContractor.name || !newContractor.email) {
-                            toast({ title: 'Missing info', description: 'Name and email are required', variant: 'destructive' });
+                          if (!newContractor.name || !newContractor.phone) {
+                            toast({ title: 'Missing info', description: 'Name and phone are required', variant: 'destructive' });
                             return;
                           }
                           const contractor: Contractor = {
                             id: `${Date.now()}`,
                             name: newContractor.name,
-                            email: newContractor.email,
+                            phone: newContractor.phone,
                             specializations: newContractor.specializations.split(',').map(s=>s.trim()).filter(Boolean),
                             rating: newContractor.rating,
                             completedJobs: newContractor.completedJobs,
                             avgCompletionTime: newContractor.avgCompletionTime,
                           };
-                          setContractors(prev => [contractor, ...prev]);
-                          setNewContractor({ name:"", email:"", specializations:"", rating:4.5, completedJobs:0, avgCompletionTime:1.0 });
+                          setContractors(prev => {
+                            const next = [contractor, ...prev];
+                            try { localStorage.setItem('roadReportContractors', JSON.stringify(next)); } catch {}
+                            return next;
+                          });
+                          setNewContractor({ name:"", phone:"", specializations:"", rating:4.5, completedJobs:0, avgCompletionTime:1.0 });
                           toast({ title: 'Contractor added', description: contractor.name });
                         }}
                       >Add</Button>
@@ -611,7 +662,7 @@ const AdminDashboard = () => {
                   </div>
                   <div className="space-y-2">
                     <p className="text-sm text-muted-foreground">Search</p>
-                    <input className="border rounded px-3 py-2 w-full bg-background" placeholder="Search by name, email, or specialization" value={contractorSearch} onChange={(e)=>setContractorSearch(e.target.value)} />
+                    <input className="border rounded px-3 py-2 w-full bg-background" placeholder="Search by name, phone, or specialization" value={contractorSearch} onChange={(e)=>setContractorSearch(e.target.value)} />
                   </div>
                 </div>
 
@@ -621,7 +672,7 @@ const AdminDashboard = () => {
                     const q = contractorSearch.toLowerCase();
                     return (
                       c.name.toLowerCase().includes(q) ||
-                      c.email.toLowerCase().includes(q) ||
+                      (c.phone || '').toLowerCase().includes(q) ||
                       c.specializations.join(',').toLowerCase().includes(q)
                     );
                   }).map((contractor) => (
@@ -629,7 +680,7 @@ const AdminDashboard = () => {
                       <div className="flex justify-between items-start mb-4">
                         <div>
                           <h3 className="text-lg font-semibold">{contractor.name}</h3>
-                          <p className="text-muted-foreground">{contractor.email}</p>
+                          <p className="text-muted-foreground">{contractor.phone}</p>
                         </div>
                         <div className="text-right">
                           <div className="flex items-center gap-1 mb-1">
@@ -665,13 +716,20 @@ const AdminDashboard = () => {
 
                       <div className="mt-4 flex gap-2">
                         <Button variant="outline" size="sm" onClick={() => {
-                          // simple increment to simulate updates
-                          setContractors(prev => prev.map(c => c.id === contractor.id ? { ...c, completedJobs: c.completedJobs + 1 } : c));
-                          toast({ title: 'Updated', description: 'Completed jobs incremented' });
+                          setContractors(prev => {
+                            const next = prev.map(c => c.id === contractor.id ? { ...c, completedJobs: c.completedJobs + 1 } : c);
+                            try { localStorage.setItem('roadReportContractors', JSON.stringify(next)); } catch {}
+                            toast({ title: 'Updated', description: 'Completed jobs incremented' });
+                            return next;
+                          });
                         }}>+1 Job</Button>
                         <Button variant="outline" size="sm" onClick={() => {
-                          setContractors(prev => prev.filter(c => c.id !== contractor.id));
-                          toast({ title: 'Removed', description: contractor.name });
+                          setContractors(prev => {
+                            const next = prev.filter(c => c.id !== contractor.id);
+                            try { localStorage.setItem('roadReportContractors', JSON.stringify(next)); } catch {}
+                            toast({ title: 'Removed', description: contractor.name });
+                            return next;
+                          });
                         }}>Remove</Button>
                       </div>
                     </Card>

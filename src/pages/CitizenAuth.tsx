@@ -30,6 +30,11 @@ const CitizenAuth = () => {
     city: ""
   });
 
+  // Location search state for signup city
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchSuggestions, setSearchSuggestions] = useState<Array<{display_name: string}> | []>([]);
+
   // If already signed in, skip auth and go to dashboard
   useEffect(() => {
     if (user && user.role === 'citizen') {
@@ -92,6 +97,33 @@ const CitizenAuth = () => {
       });
     }
   };
+
+  // Debounced city/location search for signup
+  useEffect(() => {
+    const controller = new AbortController();
+    const run = async () => {
+      const query = signupForm.city;
+      if (!query || query.trim().length < 3) {
+        setSearchSuggestions([]);
+        setShowSuggestions(false);
+        return;
+      }
+      setIsSearching(true);
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`;
+        const res = await fetch(url, { signal: controller.signal, headers: { 'Accept': 'application/json' } });
+        const data = await res.json();
+        setSearchSuggestions(Array.isArray(data) ? data : []);
+        setShowSuggestions(true);
+      } catch {
+        // ignore
+      } finally {
+        setIsSearching(false);
+      }
+    };
+    const t = setTimeout(run, 450);
+    return () => { clearTimeout(t); controller.abort(); };
+  }, [signupForm.city]);
 
   return (
     <div className="min-h-screen bg-gradient-hero relative overflow-hidden">
@@ -210,9 +242,9 @@ const CitizenAuth = () => {
                     {isLoading ? "Signing In..." : "Sign In"}
                   </Button>
 
-                  <div className="text-center text-sm text-muted-foreground mt-4">
+                  {/* <div className="text-center text-sm text-muted-foreground mt-4">
                     Demo: Use <strong>sarah@example.com</strong> for testing
-                  </div>
+                  </div> */}
                 </form>
               </TabsContent>
 
@@ -258,12 +290,33 @@ const CitizenAuth = () => {
                       <Input
                         id="city"
                         type="text"
-                        placeholder="Enter your city"
+                        placeholder="Search your city or area"
                         className="pl-10"
                         value={signupForm.city}
-                        onChange={(e) => setSignupForm({ ...signupForm, city: e.target.value })}
+                        onChange={(e) => { setSignupForm({ ...signupForm, city: e.target.value }); setShowSuggestions(true); }}
+                        onFocus={() => { if (searchSuggestions.length > 0) setShowSuggestions(true); }}
+                        onBlur={() => { setTimeout(() => setShowSuggestions(false), 150); }}
                         required
                       />
+                      {isSearching && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                        </div>
+                      )}
+                      {showSuggestions && searchSuggestions.length > 0 && (
+                        <div className="absolute z-50 w-full mt-1 bg-background border border-border rounded-md shadow-lg max-h-56 overflow-y-auto">
+                          {searchSuggestions.map((s: any, idx: number) => (
+                            <div
+                              key={`${s.place_id ?? idx}`}
+                              className="px-3 py-2 hover:bg-muted cursor-pointer text-sm border-b border-border last:border-b-0"
+                              onClick={() => { setSignupForm({ ...signupForm, city: s.display_name }); setShowSuggestions(false); }}
+                            >
+                              <div className="font-medium text-foreground">{String(s.display_name).split(',')[0]}</div>
+                              <div className="text-xs text-muted-foreground">{String(s.display_name).split(',').slice(1).join(',').trim()}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 

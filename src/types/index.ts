@@ -38,7 +38,7 @@ export interface Report {
 export interface Contractor {
   id: string;
   name: string;
-  email: string;
+  phone: string;
   specializations: string[];
   rating: number;
   completedJobs: number;

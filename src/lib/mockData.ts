@@ -105,7 +105,7 @@ export const mockContractors: Contractor[] = [
   {
     id: '1',
     name: 'ABC Road Works',
-    email: 'contact@abcroadworks.com',
+    phone: '+1 (415) 555-0123',
     specializations: ['pothole', 'road_damage'],
     rating: 4.5,
     completedJobs: 127,
@@ -114,7 +114,7 @@ export const mockContractors: Contractor[] = [
   {
     id: '2',
     name: 'City Electric Services',
-    email: 'info@cityelectric.com',
+    phone: '+1 (415) 555-0456',
     specializations: ['streetlight', 'traffic_signal'],
     rating: 4.8,
     completedJobs: 89,
@@ -123,7 +123,7 @@ export const mockContractors: Contractor[] = [
   {
     id: '3',
     name: 'Drainage Solutions Inc',
-    email: 'help@drainagesolutions.com',
+    phone: '+1 (415) 555-0789',
     specializations: ['drainage'],
     rating: 4.2,
     completedJobs: 56,
