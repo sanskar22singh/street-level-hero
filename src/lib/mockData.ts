@@ -52,6 +52,7 @@ export const mockReports: Report[] = [
       address: '123 Main Street, San Francisco, CA'
     },
     images: ['pothole1.jpg'],
+    videos: [],
     submittedAt: '2024-09-20T10:30:00Z',
     assignedContractor: 'ABC Road Works',
     expectedCompletion: '2024-09-25T17:00:00Z',
@@ -72,6 +73,7 @@ export const mockReports: Report[] = [
       address: '456 Pine Street, San Francisco, CA'
     },
     images: ['streetlight1.jpg'],
+    videos: [],
     submittedAt: '2024-09-22T14:15:00Z',
     points: 100,
   },
@@ -90,6 +92,7 @@ export const mockReports: Report[] = [
       address: '789 Market Street, San Francisco, CA'
     },
     images: ['traffic1.jpg'],
+    videos: [],
     submittedAt: '2024-09-18T08:45:00Z',
     assignedContractor: 'City Electric Services',
     expectedCompletion: '2024-09-18T12:00:00Z',

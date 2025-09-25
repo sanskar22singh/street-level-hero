@@ -14,17 +14,19 @@ const Index = () => {
     <div className="min-h-screen bg-gradient-hero relative overflow-hidden">
       {/* Hero Background */}
       <div 
-        className="absolute inset-0 opacity-20 bg-cover bg-center"
+        className="absolute inset-0 opacity-30 bg-cover bg-center"
         style={{ backgroundImage: `url(${heroImage})` }}
       />
+      {/* Vibrant gradient overlay */}
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/30 via-secondary/20 to-accent/30 mix-blend-overlay" />
       
       {/* Animated Background Elements */}
       <div className="absolute inset-0">
         <motion.div
-          className="absolute top-20 left-20 w-72 h-72 bg-primary/10 rounded-full blur-3xl"
+          className="absolute top-20 left-20 w-80 h-80 bg-primary/20 rounded-full blur-3xl"
           animate={{ 
             scale: [1, 1.2, 1],
-            opacity: [0.3, 0.6, 0.3]
+            opacity: [0.4, 0.75, 0.4]
           }}
           transition={{ 
             duration: 4,
@@ -33,13 +35,25 @@ const Index = () => {
           }}
         />
         <motion.div
-          className="absolute bottom-20 right-20 w-96 h-96 bg-secondary/10 rounded-full blur-3xl"
+          className="absolute bottom-20 right-20 w-[28rem] h-[28rem] bg-secondary/25 rounded-full blur-3xl"
           animate={{ 
             scale: [1.2, 1, 1.2],
-            opacity: [0.4, 0.7, 0.4]
+            opacity: [0.5, 0.85, 0.5]
           }}
           transition={{ 
             duration: 5,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+        />
+        <motion.div
+          className="absolute -bottom-10 left-1/3 w-[32rem] h-[32rem] bg-accent/25 rounded-full blur-3xl"
+          animate={{ 
+            scale: [1, 1.15, 1],
+            opacity: [0.35, 0.7, 0.35]
+          }}
+          transition={{ 
+            duration: 6,
             repeat: Infinity,
             ease: "easeInOut"
           }}
@@ -55,18 +69,18 @@ const Index = () => {
           className="text-center mb-16"
         >
           <motion.h1 
-            className="text-5xl md:text-7xl font-bold text-white mb-6 gradient-text"
+            className="text-5xl md:text-7xl font-extrabold text-foreground mb-6"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.2 }}
           >
             Citizen Road Issue 
             <br />
-            <span className="gradient-text">Reporting System</span> 🚧
+            <span>Reporting System</span> 🚧
           </motion.h1>
           
           <motion.p 
-            className="text-xl md:text-2xl text-white/90 max-w-3xl mx-auto leading-relaxed"
+            className="text-xl md:text-2xl text-white max-w-3xl mx-auto leading-relaxed drop-shadow-[0_2px_6px_rgba(0,0,0,0.25)]"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.4 }}
@@ -89,7 +103,7 @@ const Index = () => {
             whileTap={{ scale: 0.98 }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
           >
-            <Card className="glass-strong p-8 text-center hover-lift cursor-pointer group"
+            <Card className="glass-strong p-8 text-center hover-lift cursor-pointer group bg-gradient-to-br from-background/70 to-muted/40 ring-1 ring-primary/20 hover:ring-primary/40 transition"
                   onClick={() => navigate('/citizen/auth')}>
               <motion.div 
                 className="mb-6"
@@ -127,7 +141,7 @@ const Index = () => {
               <Button 
                 variant="hero" 
                 size="xl"
-                className="w-full group-hover:shadow-glow"
+                className="w-full group-hover:shadow-glow shadow-[0_10px_30px_rgba(59,130,246,0.35)]"
               >
                 Start Reporting
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
@@ -141,7 +155,7 @@ const Index = () => {
             whileTap={{ scale: 0.98 }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
           >
-            <Card className="glass-strong p-8 text-center hover-lift cursor-pointer group"
+            <Card className="glass-strong p-8 text-center hover-lift cursor-pointer group bg-gradient-to-br from-background/70 to-muted/40 ring-1 ring-secondary/20 hover:ring-secondary/40 transition"
                   onClick={() => navigate('/admin/auth')}>
               <motion.div 
                 className="mb-6"
@@ -179,7 +193,7 @@ const Index = () => {
               <Button 
                 variant="accent" 
                 size="xl"
-                className="w-full group-hover:shadow-glow"
+                className="w-full group-hover:shadow-glow shadow-[0_10px_30px_rgba(236,72,153,0.35)]"
               >
                 Access Dashboard
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />

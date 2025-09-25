@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import heroImage from "@/assets/hero-bg.jpg";
 
 const AdminAuth = () => {
   const navigate = useNavigate();
-  const { login, isLoading } = useAuth();
+  const { user, login, isLoading, adminExists, createAdmin, requestPasswordReset, resetPassword } = useAuth();
   const { toast } = useToast();
   
   const [showPassword, setShowPassword] = useState(false);
@@ -20,6 +20,18 @@ const AdminAuth = () => {
     email: "",
     password: ""
   });
+  const [setupForm, setSetupForm] = useState({ name: "", email: "", password: "", city: "" });
+  const [resetForm, setResetForm] = useState({ email: "", token: "", newPassword: "" });
+  const [mode, setMode] = useState<'login' | 'setup' | 'forgot'>("login");
+
+  // If already signed in, skip auth and go to dashboard
+  useEffect(() => {
+    if (user && user.role === 'admin') {
+      navigate('/admin/dashboard');
+    }
+    // Auto-switch to setup if no admin exists
+    if (!adminExists) setMode('setup');
+  }, [user, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,6 +53,39 @@ const AdminAuth = () => {
     }
   };
 
+  const handleSetup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await createAdmin(setupForm);
+      toast({ title: 'Admin Setup Complete', description: 'You are now signed in as admin.' });
+      navigate('/admin/dashboard');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Setup failed';
+      toast({ title: 'Setup Failed', description: message, variant: 'destructive' });
+    }
+  };
+
+  const handleRequestReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const token = await requestPasswordReset(resetForm.email);
+    if (!token) {
+      toast({ title: 'Not Found', description: 'No admin with that email', variant: 'destructive' });
+      return;
+    }
+    toast({ title: 'Reset Token Generated', description: `Use this token: ${token}` });
+  };
+
+  const handleReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ok = await resetPassword(resetForm.email, resetForm.token, resetForm.newPassword);
+    if (ok) {
+      toast({ title: 'Password Updated', description: 'You can sign in with your new password.' });
+      setMode('login');
+    } else {
+      toast({ title: 'Invalid Token', description: 'Token invalid or expired', variant: 'destructive' });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-hero relative overflow-hidden">
       {/* Background */}
@@ -48,6 +93,8 @@ const AdminAuth = () => {
         className="absolute inset-0 opacity-10 bg-cover bg-center"
         style={{ backgroundImage: `url(${heroImage})` }}
       />
+      {/* Dark overlay */}
+      <div className="absolute inset-0 bg-black/60" />
       
       {/* Animated Elements */}
       <motion.div
@@ -88,13 +135,13 @@ const AdminAuth = () => {
           transition={{ duration: 0.5 }}
           className="w-full max-w-md"
         >
-          <div className="text-center mb-8">
+          <div className="text-center mb-8 text-white">
             <div className="flex justify-center mb-4">
               <div className="p-4 bg-gradient-accent rounded-full animate-glow">
                 <Shield className="w-12 h-12 text-white" />
               </div>
             </div>
-            <h1 className="text-4xl font-bold text-white mb-2">
+            <h1 className="text-4xl font-extrabold text-white mb-2">
               Admin Portal 🏛️
             </h1>
             <p className="text-white/80 text-lg">
@@ -102,24 +149,55 @@ const AdminAuth = () => {
             </p>
           </div>
 
-          <Card className="glass-strong p-8">
+          <Card className="glass-strong p-8 bg-black/70 border border-white/10 text-white">
+            <div className="flex gap-2 mb-6">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={()=>setMode('login')}
+                disabled={!adminExists}
+                className={`${mode==='login' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/80 hover:text-white'} border border-white/20`}
+              >
+                Sign In
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={()=>setMode('setup')}
+                disabled={adminExists}
+                className={`${mode==='setup' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/80 hover:text-white'} border border-white/20`}
+              >
+                Setup Admin
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={()=>setMode('forgot')}
+                disabled={!adminExists}
+                className={`${mode==='forgot' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/80 hover:text-white'} border border-white/20`}
+              >
+                Forgot Password
+              </Button>
+            </div>
+
+            {mode === 'login' && (
             <form onSubmit={handleLogin} className="space-y-6">
               <div className="text-center mb-6">
-                <div className="inline-flex items-center gap-2 px-4 py-2 bg-accent/20 rounded-full text-accent-foreground text-sm font-medium">
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/10 rounded-full text-white text-sm font-medium">
                   <Shield className="w-4 h-4" />
                   Authorized Personnel Only
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="email">Admin Email</Label>
+                <Label htmlFor="email" className="text-white">Admin Email</Label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="email"
                     type="email"
                     placeholder="Enter admin email"
-                    className="pl-10"
+                    className="pl-10 text-white placeholder:text-white/60 bg-white/10 border-white/20"
                     value={loginForm.email}
                     onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
                     required
@@ -128,14 +206,14 @@ const AdminAuth = () => {
               </div>
               
               <div className="space-y-2">
-                <Label htmlFor="password">Admin Password</Label>
+                <Label htmlFor="password" className="text-white">Admin Password</Label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="password"
                     type={showPassword ? "text" : "password"}
                     placeholder="Enter admin password"
-                    className="pl-10 pr-10"
+                    className="pl-10 pr-10 text-white placeholder:text-white/60 bg-white/10 border-white/20"
                     value={loginForm.password}
                     onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
                     required
@@ -156,21 +234,67 @@ const AdminAuth = () => {
                 type="submit" 
                 variant="accent" 
                 size="lg" 
-                className="w-full"
+                className="w-full shadow-[0_10px_30px_rgba(236,72,153,0.35)]"
                 disabled={isLoading}
               >
                 {isLoading ? "Authenticating..." : "Access Dashboard"}
               </Button>
 
               <div className="text-center space-y-2 mt-6">
-                <div className="text-sm text-muted-foreground">
+                <div className="text-sm text-white/80">
                   Demo: Use <strong>admin@city.gov</strong> for testing
                 </div>
-                <div className="text-xs text-muted-foreground/70">
+                <div className="text-xs text-white/60">
                   🔒 This portal uses multi-factor authentication in production
                 </div>
               </div>
             </form>
+            )}
+
+            {mode === 'setup' && (
+            <form onSubmit={handleSetup} className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="setup-name" className="text-white">Full Name</Label>
+                <Input id="setup-name" className="text-white placeholder:text-white/60 bg-white/10 border-white/20" value={setupForm.name} onChange={(e)=>setSetupForm({...setupForm, name:e.target.value})} required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="setup-email" className="text-white">Admin Email</Label>
+                <Input id="setup-email" type="email" className="text-white placeholder:text-white/60 bg-white/10 border-white/20" value={setupForm.email} onChange={(e)=>setSetupForm({...setupForm, email:e.target.value})} required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="setup-city" className="text-white">City</Label>
+                <Input id="setup-city" className="text-white placeholder:text-white/60 bg-white/10 border-white/20" value={setupForm.city} onChange={(e)=>setSetupForm({...setupForm, city:e.target.value})} required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="setup-pass" className="text-white">Password</Label>
+                <Input id="setup-pass" type={showPassword ? 'text' : 'password'} className="text-white placeholder:text-white/60 bg-white/10 border-white/20" value={setupForm.password} onChange={(e)=>setSetupForm({...setupForm, password:e.target.value})} required />
+              </div>
+              <Button type="submit" variant="accent" size="lg" className="w-full" disabled={isLoading}>Create Admin</Button>
+            </form>
+            )}
+
+            {mode === 'forgot' && (
+            <div className="space-y-6">
+              <form onSubmit={handleRequestReset} className="space-y-3">
+                <div className="space-y-2">
+                  <Label htmlFor="reset-email" className="text-white">Admin Email</Label>
+                  <Input id="reset-email" type="email" className="text-white placeholder:text-white/60 bg-white/10 border-white/20" value={resetForm.email} onChange={(e)=>setResetForm({...resetForm, email:e.target.value})} required />
+                </div>
+                <Button type="submit" variant="accent" className="w-full" disabled={isLoading}>Get Reset Token</Button>
+              </form>
+              <form onSubmit={handleReset} className="space-y-3">
+                <div className="space-y-2">
+                  <Label htmlFor="reset-token" className="text-white">Reset Token</Label>
+                  <Input id="reset-token" className="text-white placeholder:text-white/60 bg-white/10 border-white/20" value={resetForm.token} onChange={(e)=>setResetForm({...resetForm, token:e.target.value})} required />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="reset-pass" className="text-white">New Password</Label>
+                  <Input id="reset-pass" type="password" className="text-white placeholder:text-white/60 bg-white/10 border-white/20" value={resetForm.newPassword} onChange={(e)=>setResetForm({...resetForm, newPassword:e.target.value})} required />
+                </div>
+                <Button type="submit" variant="accent" className="w-full" disabled={isLoading}>Reset Password</Button>
+              </form>
+            </div>
+            )}
           </Card>
 
           {/* Security Features */}

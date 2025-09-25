@@ -27,12 +27,15 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { mockReports, mockLeaderboard, getProgressToNextLevel, calculateLevel } from "@/lib/mockData";
+import { getProgressToNextLevel, calculateLevel, getPointsForSeverity } from "@/lib/mockData";
+import { MapContainer, TileLayer, Marker, Circle, useMap, useMapEvents } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { Report } from "@/types";
 
 const CitizenDashboard = () => {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const { toast } = useToast();
   
   const [reports, setReports] = useState<Report[]>([]);
@@ -43,6 +46,26 @@ const CitizenDashboard = () => {
     severity: "",
     location: ""
   });
+  const [isLocating, setIsLocating] = useState(false);
+  const [photos, setPhotos] = useState<File[]>([]);
+  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
+  const [photoDataUrls, setPhotoDataUrls] = useState<string[]>([]);
+  const [videos, setVideos] = useState<File[]>([]);
+  const [videoPreviews, setVideoPreviews] = useState<string[]>([]);
+  const [videoDataUrls, setVideoDataUrls] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<'report' | 'my-reports' | 'leaderboard' | 'profile'>('report');
+  const [leaderboard, setLeaderboard] = useState<{ rank: number; userId: string; userName: string; points: number; level: string; reportCount: number; }[]>([]);
+  const [selectedLatLng, setSelectedLatLng] = useState<{lat: number; lng: number} | null>(null);
+  const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
+  const [showMap, setShowMap] = useState(false);
+  const [isReadingPhotos, setIsReadingPhotos] = useState(false);
+  const [isReadingVideos, setIsReadingVideos] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [localityName, setLocalityName] = useState<string>("");
+  const [isFetchingLocality, setIsFetchingLocality] = useState(false);
+  const [searchSuggestions, setSearchSuggestions] = useState<Array<{display_name: string, lat: string, lon: string}>>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
 
   useEffect(() => {
     if (!user || user.role !== 'citizen') {
@@ -50,9 +73,38 @@ const CitizenDashboard = () => {
       return;
     }
     
-    // Load user's reports
-    const userReports = mockReports.filter(r => r.citizenId === user.id);
-    setReports(userReports);
+    // Load user's reports from localStorage only
+    const storedRaw = localStorage.getItem('roadReportUserReports');
+    let storedReports: Report[] = [];
+    try {
+      storedReports = storedRaw ? (JSON.parse(storedRaw) as Report[]) : [];
+    } catch {
+      storedReports = [];
+    }
+    const userStored = storedReports.filter(r => r.citizenId === user.id);
+    setReports([...userStored]);
+
+    // Build dynamic leaderboard from users + stored users and report counts
+    try {
+      const usersRaw = localStorage.getItem('roadReportUsers');
+      const storedUsers = usersRaw ? JSON.parse(usersRaw) as Array<{ id: string; name: string; email: string; role: string; points: number; level: string; }> : [];
+      const byEmail = new Map<string, any>();
+      storedUsers.forEach(u => byEmail.set(u.email.toLowerCase(), u));
+      if (user) byEmail.set(user.email.toLowerCase(), user);
+
+      const allReports = [...(storedReports || [])];
+      const entries = Array.from(byEmail.values())
+        .filter(u => u.role === 'citizen')
+        .map((u) => {
+          const reportCount = allReports.filter(r => r.citizenId === u.id).length;
+          return { userId: u.id, userName: u.name, points: u.points, level: u.level, reportCount };
+        })
+        .sort((a, b) => b.points - a.points)
+        .map((e, idx) => ({ ...e, rank: idx + 1 }));
+      setLeaderboard(entries);
+    } catch {
+      setLeaderboard([]);
+    }
   }, [user, navigate]);
 
   if (!user) return null;
@@ -64,11 +116,77 @@ const CitizenDashboard = () => {
 
   const handleSubmitReport = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Mock submission
+    if (!newReport.title || !newReport.type || !newReport.severity || !newReport.location) {
+      toast({ title: 'Missing Information', description: 'Please fill title, type, severity, and location.', variant: 'destructive' });
+      return;
+    }
+    if (isReadingPhotos || isReadingVideos) {
+      toast({ title: 'Processing Media', description: 'Please wait while photos and videos are processed…' });
+      return;
+    }
+    setIsSubmitting(true);
+
+    try {
+      // Create report and persist
+      const now = new Date().toISOString();
+      const points = newReport.severity ? getPointsForSeverity(newReport.severity as Report['severity']) : 50;
+      const generateId = () => (typeof crypto !== 'undefined' && (crypto as any).randomUUID ? (crypto as any).randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
+      const created: Report = {
+        id: generateId(),
+        citizenId: user.id,
+        citizenName: user.name,
+        title: newReport.title,
+        description: newReport.description,
+        type: (newReport.type || 'other') as Report['type'],
+        severity: (newReport.severity || 'low') as Report['severity'],
+        status: 'submitted',
+        location: {
+          lat: selectedLatLng ? selectedLatLng.lat : 0,
+          lng: selectedLatLng ? selectedLatLng.lng : 0,
+          address: newReport.location,
+        },
+        images: photoDataUrls,
+        videos: videoDataUrls,
+        submittedAt: now,
+        points,
+      };
+
+      const existingRaw = localStorage.getItem('roadReportUserReports');
+      let existing: Report[] = [];
+      try { existing = existingRaw ? (JSON.parse(existingRaw) as Report[]) : []; } catch { existing = []; }
+
+      // Persist with graceful fallback if quota is exceeded
+      try {
+        const updated = [...existing, created];
+        localStorage.setItem('roadReportUserReports', JSON.stringify(updated));
+      } catch {
+        try {
+          const updated = [...existing, { ...created, images: [] }];
+          localStorage.setItem('roadReportUserReports', JSON.stringify(updated));
+        } catch {
+          // ignore if persistence completely fails
+        }
+      }
+
+      setReports(prev => [...prev, created]);
+
+      // Update user points and badges
+      const newTotalPoints = (user.points || 0) + points;
+      const earnedBadges: string[] = [];
+      if (!user.badges.includes('first_report') && (reports.length + 1) === 1) {
+        earnedBadges.push('first_report');
+      }
+      if (points >= 150 && !user.badges.includes('detail_oriented')) {
+        earnedBadges.push('detail_oriented');
+      }
+
+      const nextLevel = calculateLevel(newTotalPoints);
+      const updatedBadges = Array.from(new Set([...user.badges, ...earnedBadges]));
+      updateUser({ points: newTotalPoints, level: nextLevel, badges: updatedBadges });
+
     toast({
       title: "Report Submitted! 🎉",
-      description: `+${newReport.severity === 'critical' ? 200 : 150} points earned!`,
+        description: `+${points} points earned! ${earnedBadges.length ? `New badge: ${earnedBadges.join(', ')}` : ''}`,
     });
 
     // Reset form
@@ -79,7 +197,252 @@ const CitizenDashboard = () => {
       severity: "",
       location: ""
     });
+      setPhotos([]);
+      setPhotoPreviews([]);
+      setPhotoDataUrls([]);
+      setActiveTab('my-reports');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not submit report';
+      toast({ title: 'Submit Failed', description: message, variant: 'destructive' });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  const handleUseCurrentLocation = () => {
+    if (!('geolocation' in navigator)) {
+      toast({
+        title: 'Geolocation Unavailable',
+        description: 'Your browser does not support location services.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        const coordsString = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+        setNewReport({ ...newReport, location: coordsString });
+        setSelectedLatLng({ lat: latitude, lng: longitude });
+        setLocationAccuracy(typeof pos.coords.accuracy === 'number' ? pos.coords.accuracy : null);
+        toast({
+          title: 'Location Captured 📍',
+          description: `Using current location: ${coordsString}`,
+        });
+        setIsLocating(false);
+      },
+      (err) => {
+        let message = 'Unable to get current location.';
+        if (err.code === err.PERMISSION_DENIED) message = 'Location permission denied. Please allow access.';
+        if (err.code === err.POSITION_UNAVAILABLE) message = 'Location information is unavailable.';
+        if (err.code === err.TIMEOUT) message = 'Getting location timed out. Try again.';
+        toast({ title: 'Location Error', description: message, variant: 'destructive' });
+        setIsLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  // Debounced search function
+  const searchLocation = async (query: string) => {
+    if (!query || query.length < 3) {
+      setSearchSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1&countrycodes=`
+      );
+      const data = await response.json();
+      setSearchSuggestions(data || []);
+      setShowSuggestions(true);
+    } catch (error) {
+      console.error('Error searching location:', error);
+      toast({ title: 'Search Error', description: 'Failed to search for location.', variant: 'destructive' });
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Debounce search
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (newReport.location && newReport.location.length >= 3) {
+        searchLocation(newReport.location);
+      } else {
+        setSearchSuggestions([]);
+        setShowSuggestions(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [newReport.location]);
+
+  const handleLocationSelect = (suggestion: {display_name: string, lat: string, lon: string}) => {
+    const lat = parseFloat(suggestion.lat);
+    const lng = parseFloat(suggestion.lon);
+    
+    setSelectedLatLng({ lat, lng });
+    setNewReport({ ...newReport, location: suggestion.display_name });
+    setLocalityName(suggestion.display_name);
+    setShowSuggestions(false);
+    setSearchSuggestions([]);
+    
+    toast({ title: 'Location Selected', description: `Selected: ${suggestion.display_name}` });
+  };
+
+  function MapClickHandler({ onSelect }: { onSelect: (lat: number, lng: number) => void }) {
+    useMapEvents({
+      click(e) {
+        onSelect(e.latlng.lat, e.latlng.lng);
+      },
+    });
+    return null;
+  }
+
+  function MapCenterOnSelected({ center }: { center: {lat: number; lng: number} | null }) {
+    const map = useMap();
+    useEffect(() => {
+      if (center) {
+        map.flyTo(center, map.getZoom(), { duration: 0.5 });
+      }
+    }, [center, map]);
+    return null;
+  }
+
+  function PulsingMarker({ position }: { position: { lat: number; lng: number } }) {
+    const icon = L.divIcon({
+      className: 'pulse-marker',
+      html: '<div class="pulse-core"></div><div class="pulse-ring"></div>',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+    return <Marker position={position} icon={icon as any} />;
+  }
+
+  const handlePhotosSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    if (!files.length) return;
+    setPhotos(files);
+    setIsReadingPhotos(true);
+    // Compress large images to allow larger uploads within storage limits
+    const compressImage = (file: File): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => {
+            const maxDim = 1600; // px
+            let { width, height } = img;
+            if (width > height && width > maxDim) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else if (height > width && height > maxDim) {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            } else if (width === height && width > maxDim) {
+              width = maxDim; height = maxDim;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return reject(new Error('Canvas not supported'));
+            ctx.drawImage(img, 0, 0, width, height);
+            // Try a couple of qualities to stay below ~800KB
+            let quality = 0.8;
+            let dataUrl = canvas.toDataURL('image/jpeg', quality);
+            const targetBytes = 800 * 1024;
+            // Downscale quality if still too big (simple loop)
+            while (dataUrl.length * 0.75 > targetBytes && quality > 0.5) {
+              quality -= 0.1;
+              dataUrl = canvas.toDataURL('image/jpeg', quality);
+            }
+            resolve(dataUrl);
+          };
+          img.onerror = () => reject(new Error('Image decode failed'));
+          img.src = String(reader.result);
+        };
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+    };
+    try {
+      const dataUrls = await Promise.all(files.map(compressImage));
+      setPhotoDataUrls(dataUrls);
+      setPhotoPreviews(dataUrls);
+    } catch (e) {
+      toast({ title: 'Photo Error', description: 'Could not read selected photos.', variant: 'destructive' });
+    } finally {
+      setIsReadingPhotos(false);
+    }
+  };
+
+  const handleVideosSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    if (!files.length) return;
+    
+    // Filter for video files only
+    const videoFiles = files.filter(file => file.type.startsWith('video/'));
+    if (videoFiles.length !== files.length) {
+      toast({ title: 'Invalid Files', description: 'Please select only video files.', variant: 'destructive' });
+    }
+    if (!videoFiles.length) return;
+    
+    setVideos(videoFiles);
+    setIsReadingVideos(true);
+    
+    // Process videos to data URLs (no compression for videos as it's complex)
+    const processVideo = (file: File): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Failed to read video file'));
+        reader.readAsDataURL(file);
+      });
+    };
+    
+    try {
+      const dataUrls = await Promise.all(videoFiles.map(processVideo));
+      setVideoDataUrls(dataUrls);
+      setVideoPreviews(dataUrls);
+    } catch (e) {
+      toast({ title: 'Video Error', description: 'Could not read selected videos.', variant: 'destructive' });
+    } finally {
+      setIsReadingVideos(false);
+    }
+  };
+
+  // Reverse geocode selected location to show locality/area names visibly
+  useEffect(() => {
+    const fetchLocality = async () => {
+      if (!selectedLatLng) return;
+      setIsFetchingLocality(true);
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${selectedLatLng.lat}&lon=${selectedLatLng.lng}&format=json&zoom=14&addressdetails=1`);
+        const data = await res.json();
+        const addr = data?.address || {};
+        const name = data?.display_name || [addr.neighbourhood, addr.suburb, addr.village, addr.town, addr.city, addr.state]
+          .filter(Boolean)
+          .join(', ');
+        if (name) {
+          setLocalityName(name);
+          // Update the location input to a readable address
+          setNewReport(prev => ({ ...prev, location: name }));
+        }
+      } catch (e) {
+        // ignore
+      } finally {
+        setIsFetchingLocality(false);
+      }
+    };
+    fetchLocality();
+  }, [selectedLatLng]);
 
   const progress = getProgressToNextLevel(user.points);
   const statusColors = {
@@ -103,6 +466,9 @@ const CitizenDashboard = () => {
             </div>
             
             <div className="flex items-center gap-4">
+              <Button variant="outline" size="sm" onClick={() => navigate('/admin/auth')}>
+                Admin Portal
+              </Button>
               <div className="text-right">
                 <p className="text-sm text-muted-foreground">Welcome back,</p>
                 <p className="font-semibold">{user.name}</p>
@@ -188,8 +554,16 @@ const CitizenDashboard = () => {
           </Card>
         </motion.div>
 
+        {/* Quick Links between sections */}
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <Button variant={activeTab === 'report' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('report')}>Report Issue</Button>
+          <Button variant={activeTab === 'my-reports' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('my-reports')}>My Reports</Button>
+          <Button variant={activeTab === 'leaderboard' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('leaderboard')}>Leaderboard</Button>
+          <Button variant={activeTab === 'profile' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('profile')}>Badges & Points</Button>
+        </div>
+
         {/* Main Content Tabs */}
-        <Tabs defaultValue="report" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">
           <TabsList className="grid w-full grid-cols-4 lg:w-fit">
             <TabsTrigger value="report" className="flex items-center gap-2">
               <Target className="w-4 h-4" />
@@ -267,18 +641,98 @@ const CitizenDashboard = () => {
                     
                     <div className="space-y-2">
                       <Label htmlFor="location">Location</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          id="location"
-                          placeholder="Enter address or description"
-                          value={newReport.location}
-                          onChange={(e) => setNewReport({ ...newReport, location: e.target.value })}
-                          required
-                        />
-                        <Button type="button" variant="outline" size="icon">
-                          <MapPin className="w-4 h-4" />
-                        </Button>
+                      <div className="relative">
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <Input
+                              id="location"
+                              placeholder="Search for a location or enter address"
+                              value={newReport.location}
+                              onChange={(e) => {
+                                setNewReport({ ...newReport, location: e.target.value });
+                                setShowSuggestions(true);
+                              }}
+                              onFocus={() => {
+                                if (searchSuggestions.length > 0) setShowSuggestions(true);
+                              }}
+                              onBlur={() => {
+                                // Delay hiding suggestions to allow clicking on them
+                                setTimeout(() => setShowSuggestions(false), 200);
+                              }}
+                              required
+                            />
+                            {isSearching && (
+                              <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                              </div>
+                            )}
+                            
+                            {/* Search Suggestions Dropdown */}
+                            {showSuggestions && searchSuggestions.length > 0 && (
+                              <div className="absolute z-50 w-full mt-1 bg-background border border-border rounded-md shadow-lg max-h-60 overflow-y-auto">
+                                {searchSuggestions.map((suggestion, index) => (
+                                  <div
+                                    key={index}
+                                    className="px-3 py-2 hover:bg-muted cursor-pointer text-sm border-b border-border last:border-b-0"
+                                    onClick={() => handleLocationSelect(suggestion)}
+                                  >
+                                    <div className="font-medium text-foreground">
+                                      {suggestion.display_name.split(',')[0]}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {suggestion.display_name.split(',').slice(1).join(',').trim()}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <Button type="button" variant="outline" size="icon" onClick={handleUseCurrentLocation} disabled={isLocating}>
+                            <MapPin className={`w-4 h-4 ${isLocating ? 'animate-pulse' : ''}`} />
+                          </Button>
+                          <Button type="button" variant="outline" onClick={() => setShowMap((v) => !v)}>
+                            {showMap ? 'Hide Map' : 'Pick on Map'}
+                          </Button>
+                        </div>
                       </div>
+                      <p className="text-xs text-muted-foreground">
+                        Tip: Type to search locations, use GPS pin, or "Pick on Map" to choose locality.
+                      </p>
+
+                      {showMap && (
+                        <div className="mt-3">
+                          <div className="h-56 md:h-72 rounded-md overflow-hidden border">
+                            <MapContainer center={selectedLatLng || { lat: 37.7749, lng: -122.4194 }} zoom={13} scrollWheelZoom={false} className="h-full w-full">
+                              <TileLayer
+                                attribution='&copy; OpenStreetMap &copy; CARTO'
+                                url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                              />
+                              <MapCenterOnSelected center={selectedLatLng} />
+                              <MapClickHandler onSelect={(lat, lng) => {
+                                setSelectedLatLng({ lat, lng });
+                                setNewReport({ ...newReport, location: `${lat.toFixed(6)}, ${lng.toFixed(6)}` });
+                                toast({ title: 'Locality Selected', description: `Pinned at ${lat.toFixed(6)}, ${lng.toFixed(6)}` });
+                              }} />
+                              {selectedLatLng && (
+                                <>
+                                  <PulsingMarker position={selectedLatLng} />
+                                  {locationAccuracy && (
+                                    <Circle center={selectedLatLng} radius={locationAccuracy} pathOptions={{ color: 'rgba(59,130,246,0.5)', fillOpacity: 0.12 }} />
+                                  )}
+                                </>
+                              )}
+                            </MapContainer>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            Tap on the map to set your locality.
+                            {localityName && (
+                              <>
+                                {" "}• Selected: <span className="font-medium">{isFetchingLocality ? 'Resolving…' : localityName}</span>
+                              </>
+                            )}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -296,20 +750,76 @@ const CitizenDashboard = () => {
 
                   <div className="space-y-4">
                     <Label>Upload Photos (Optional)</Label>
-                    <div className="border-2 border-dashed border-muted rounded-lg p-8 text-center">
-                      <Camera className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-                      <p className="text-muted-foreground">
-                        Click to upload photos or drag and drop
+                    <div className="border-2 border-dashed border-muted rounded-lg p-6 text-center">
+                      <input
+                        id="photos-input"
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        capture="environment"
+                        className="hidden"
+                        onChange={handlePhotosSelected}
+                      />
+                      <Button type="button" variant="outline" onClick={() => document.getElementById('photos-input')?.click()}>
+                        <Camera className="w-4 h-4 mr-2" />
+                        Select photos from device
+                      </Button>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        JPG/PNG, multiple allowed. On mobile, you can use the camera directly.
                       </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Photos help verify issues and earn bonus points!
-                      </p>
+
+                      {photoPreviews.length > 0 && (
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 mt-4">
+                          {photoPreviews.map((src, idx) => (
+                            <div key={idx} className="relative">
+                              <img src={src} alt={`selected-${idx}`} className="w-full h-24 object-cover rounded-md border" />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <Button type="submit" variant="hero" size="lg" className="w-full">
+                  <div className="space-y-4">
+                    <Label>Upload Videos (Optional)</Label>
+                    <div className="border-2 border-dashed border-muted rounded-lg p-6 text-center">
+                      <input
+                        id="videos-input"
+                        type="file"
+                        accept="video/*"
+                        multiple
+                        capture="environment"
+                        className="hidden"
+                        onChange={handleVideosSelected}
+                      />
+                      <Button type="button" variant="outline" onClick={() => document.getElementById('videos-input')?.click()}>
+                        <Camera className="w-4 h-4 mr-2" />
+                        Select videos from device
+                      </Button>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        MP4/MOV/AVI, multiple allowed. On mobile, you can record videos directly.
+                      </p>
+
+                      {videoPreviews.length > 0 && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                          {videoPreviews.map((src, idx) => (
+                            <div key={idx} className="relative">
+                              <video 
+                                src={src} 
+                                className="w-full h-32 object-cover rounded-md border"
+                                controls
+                                preload="metadata"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <Button type="submit" variant="hero" size="lg" className="w-full" disabled={isSubmitting || isReadingPhotos || isReadingVideos}>
                     <Send className="w-5 h-5 mr-2" />
-                    Submit Report & Earn Points
+                    {isSubmitting ? 'Submitting…' : (isReadingPhotos || isReadingVideos ? 'Processing Media…' : 'Submit Report & Earn Points')}
                   </Button>
                 </form>
               </Card>
@@ -376,7 +886,7 @@ const CitizenDashboard = () => {
                 <h2 className="text-2xl font-bold mb-6">Community Leaderboard</h2>
                 
                 <div className="space-y-3">
-                  {mockLeaderboard.map((entry) => (
+                  {leaderboard.map((entry) => (
                     <div 
                       key={entry.userId}
                       className={`flex items-center justify-between p-4 rounded-lg ${

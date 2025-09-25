@@ -8,6 +8,8 @@ export interface User {
   level: 'Bronze' | 'Silver' | 'Gold';
   badges: string[];
   joinDate: string;
+  // Optional password for demo/local signup users stored in localStorage
+  password?: string;
 }
 
 export interface Report {
@@ -25,6 +27,7 @@ export interface Report {
     address: string;
   };
   images: string[];
+  videos: string[];
   submittedAt: string;
   assignedContractor?: string;
   expectedCompletion?: string;

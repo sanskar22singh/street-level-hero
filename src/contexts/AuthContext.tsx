@@ -1,12 +1,18 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
-import { mockUsers } from '../lib/mockData';
+// Demo users removed; rely solely on stored users
 
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string, role?: 'citizen' | 'admin') => Promise<boolean>;
+  signup: (data: { name: string; email: string; password: string; role: 'citizen' | 'admin'; city: string }) => Promise<User>;
+  updateUser: (updates: Partial<User>) => void;
   logout: () => void;
   isLoading: boolean;
+  adminExists: boolean;
+  createAdmin: (data: { name: string; email: string; password: string; city: string }) => Promise<User>;
+  requestPasswordReset: (email: string) => Promise<string | null>;
+  resetPassword: (email: string, token: string, newPassword: string) => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -22,6 +28,7 @@ export const useAuth = () => {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [adminExists, setAdminExists] = useState(false);
 
   useEffect(() => {
     // Check for stored user session
@@ -29,8 +36,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (storedUser) {
       setUser(JSON.parse(storedUser));
     }
+    // Check if any admin user exists
+    try {
+      const usersRaw = localStorage.getItem('roadReportUsers');
+      const users: User[] = usersRaw ? JSON.parse(usersRaw) : [];
+      setAdminExists(users.some(u => u.role === 'admin'));
+    } catch {
+      setAdminExists(false);
+    }
     setIsLoading(false);
   }, []);
+
+  const getStoredUsers = (): User[] => {
+    const usersRaw = localStorage.getItem('roadReportUsers');
+    try {
+      return usersRaw ? (JSON.parse(usersRaw) as User[]) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const setStoredUsers = (users: User[]) => {
+    localStorage.setItem('roadReportUsers', JSON.stringify(users));
+  };
 
   const login = async (email: string, password: string, role?: 'citizen' | 'admin'): Promise<boolean> => {
     setIsLoading(true);
@@ -38,15 +66,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Simulate API call
     await new Promise(resolve => setTimeout(resolve, 1000));
     
-    // Mock authentication - check against mock users
-    const foundUser = mockUsers.find(u => 
-      u.email.toLowerCase() === email.toLowerCase() && 
-      (role ? u.role === role : true)
+    const storedUsers = getStoredUsers();
+
+    // Check local stored users with password match only
+    const storedUser = storedUsers.find(u => 
+      u.email.toLowerCase() === email.toLowerCase() && (role ? u.role === role : true)
     );
-    
-    if (foundUser) {
-      setUser(foundUser);
-      localStorage.setItem('roadReportUser', JSON.stringify(foundUser));
+    if (storedUser && storedUser.password === password) {
+      setUser(storedUser);
+      localStorage.setItem('roadReportUser', JSON.stringify(storedUser));
       setIsLoading(false);
       return true;
     }
@@ -55,16 +83,142 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return false;
   };
 
+  const signup: AuthContextType['signup'] = async ({ name, email, password, role, city }) => {
+    setIsLoading(true);
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    // Ensure unique email across stored users
+    const lower = email.toLowerCase();
+    const storedUsers2 = getStoredUsers();
+    const existsInStored = storedUsers2.some(u => u.email.toLowerCase() === lower);
+    if (existsInStored) {
+      setIsLoading(false);
+      // Throw for caller to handle
+      throw new Error('Email already in use');
+    }
+
+    const newUser: User = {
+      id: crypto.randomUUID(),
+      name,
+      email,
+      role,
+      city,
+      points: 0,
+      level: 'Bronze',
+      badges: [],
+      joinDate: new Date().toISOString().slice(0, 10),
+      password,
+    };
+
+    const updated = [...storedUsers2, newUser];
+    setStoredUsers(updated);
+    setUser(newUser);
+    localStorage.setItem('roadReportUser', JSON.stringify(newUser));
+    setIsLoading(false);
+    return newUser;
+  };
+
+  // One-time admin creation (only if no admin exists)
+  const createAdmin: AuthContextType['createAdmin'] = async ({ name, email, password, city }) => {
+    setIsLoading(true);
+    await new Promise(resolve => setTimeout(resolve, 600));
+    const users = getStoredUsers();
+    if (users.some(u => u.role === 'admin')) {
+      setIsLoading(false);
+      throw new Error('Admin already set up');
+    }
+    if (users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
+      setIsLoading(false);
+      throw new Error('Email already in use');
+    }
+    const admin: User = {
+      id: crypto.randomUUID(),
+      name, email, role: 'admin', city,
+      points: 0, level: 'Bronze', badges: [], joinDate: new Date().toISOString().slice(0,10), password,
+    };
+    users.push(admin);
+    setStoredUsers(users);
+    setUser(admin);
+    localStorage.setItem('roadReportUser', JSON.stringify(admin));
+    setAdminExists(true);
+    setIsLoading(false);
+    return admin;
+  };
+
+  // Simple password reset using localStorage token (demo-only)
+  const requestPasswordReset: AuthContextType['requestPasswordReset'] = async (email) => {
+    const users = getStoredUsers();
+    const found = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (!found) return null;
+    const token = Math.random().toString(36).slice(2, 8).toUpperCase();
+    const tokensRaw = localStorage.getItem('roadReportResetTokens');
+    const tokens = tokensRaw ? JSON.parse(tokensRaw) as Record<string, { token: string; exp: number }> : {};
+    tokens[email.toLowerCase()] = { token, exp: Date.now() + 15 * 60 * 1000 };
+    localStorage.setItem('roadReportResetTokens', JSON.stringify(tokens));
+    return token; // In real app, email this token
+  };
+
+  const resetPassword: AuthContextType['resetPassword'] = async (email, token, newPassword) => {
+    const tokensRaw = localStorage.getItem('roadReportResetTokens');
+    const tokens = tokensRaw ? JSON.parse(tokensRaw) as Record<string, { token: string; exp: number }> : {};
+    const rec = tokens[email.toLowerCase()];
+    if (!rec || rec.token !== token || rec.exp < Date.now()) return false;
+    // update user
+    const users = getStoredUsers();
+    const idx = users.findIndex(u => u.email.toLowerCase() === email.toLowerCase());
+    if (idx === -1) return false;
+    users[idx] = { ...users[idx], password: newPassword } as User;
+    setStoredUsers(users);
+    // clear token
+    delete tokens[email.toLowerCase()];
+    localStorage.setItem('roadReportResetTokens', JSON.stringify(tokens));
+    // If resetting current session user, update it
+    setUser(prev => {
+      if (prev && prev.email.toLowerCase() === email.toLowerCase()) {
+        const updated = { ...prev, password: newPassword } as User;
+        localStorage.setItem('roadReportUser', JSON.stringify(updated));
+        return updated;
+      }
+      return prev;
+    });
+    return true;
+  };
+
   const logout = () => {
     setUser(null);
     localStorage.removeItem('roadReportUser');
   };
 
+  const updateUser: AuthContextType['updateUser'] = (updates) => {
+    setUser(prev => {
+      if (!prev) return prev;
+      const updatedUser: User = { ...prev, ...updates };
+      // Persist session user
+      localStorage.setItem('roadReportUser', JSON.stringify(updatedUser));
+
+      // Persist in stored users list as well
+      const users = getStoredUsers();
+      const idx = users.findIndex(u => u.id === updatedUser.id);
+      if (idx !== -1) {
+        users[idx] = { ...users[idx], ...updates } as User;
+        setStoredUsers(users);
+      }
+
+      return updatedUser;
+    });
+  };
+
   const value = {
     user,
     login,
+    signup,
+    updateUser,
     logout,
-    isLoading
+    isLoading,
+    adminExists,
+    createAdmin,
+    requestPasswordReset,
+    resetPassword,
   };
 
   return (

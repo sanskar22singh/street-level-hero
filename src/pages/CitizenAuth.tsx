@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import heroImage from "@/assets/hero-bg.jpg";
 
 const CitizenAuth = () => {
   const navigate = useNavigate();
-  const { login, isLoading } = useAuth();
+  const { user, login, signup, isLoading } = useAuth();
   const { toast } = useToast();
   
   const [showPassword, setShowPassword] = useState(false);
@@ -29,6 +29,13 @@ const CitizenAuth = () => {
     confirmPassword: "",
     city: ""
   });
+
+  // If already signed in, skip auth and go to dashboard
+  useEffect(() => {
+    if (user && user.role === 'citizen') {
+      navigate('/citizen/dashboard');
+    }
+  }, [user, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,19 +69,26 @@ const CitizenAuth = () => {
       return;
     }
 
-    // For demo, auto-login after signup
-    const success = await login(signupForm.email, signupForm.password, 'citizen');
-    
-    if (success) {
+    try {
+      await signup({
+        name: signupForm.name,
+        email: signupForm.email,
+        password: signupForm.password,
+        role: 'citizen',
+        city: signupForm.city,
+      });
+
       toast({
         title: "Account Created! 🎊",
         description: "Welcome to the Road Reporter community! You earned 50 starter points.",
       });
       navigate('/citizen/dashboard');
-    } else {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not create account';
       toast({
-        title: "Signup Complete",
-        description: "Account created! Please log in with your credentials.",
+        title: "Signup Error",
+        description: message,
+        variant: "destructive",
       });
     }
   };
