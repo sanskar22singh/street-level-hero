@@ -72,19 +72,14 @@ const CitizenDashboard = () => {
       navigate('/citizen/auth');
       return;
     }
-    
     // Load user's reports from localStorage only
     const storedRaw = localStorage.getItem('roadReportUserReports');
     let storedReports: Report[] = [];
-    try {
-      storedReports = storedRaw ? (JSON.parse(storedRaw) as Report[]) : [];
-    } catch {
-      storedReports = [];
-    }
+    try { storedReports = storedRaw ? (JSON.parse(storedRaw) as Report[]) : []; } catch { storedReports = []; }
     const userStored = storedReports.filter(r => r.citizenId === user.id);
     setReports([...userStored]);
-
-    // Build dynamic leaderboard from users + stored users and report counts
+  
+    // Build leaderboard from real local users + their report counts
     try {
       const usersRaw = localStorage.getItem('roadReportUsers');
       const storedUsers = usersRaw ? JSON.parse(usersRaw) as Array<{ id: string; name: string; email: string; role: string; points: number; level: string; }> : [];
@@ -92,7 +87,10 @@ const CitizenDashboard = () => {
       storedUsers.forEach(u => byEmail.set(u.email.toLowerCase(), u));
       if (user) byEmail.set(user.email.toLowerCase(), user);
 
-      const allReports = [...(storedReports || [])];
+      const allReportsRaw = localStorage.getItem('roadReportUserReports');
+      let allReports: Report[] = [];
+      try { allReports = allReportsRaw ? (JSON.parse(allReportsRaw) as Report[]) : []; } catch { allReports = []; }
+
       const entries = Array.from(byEmail.values())
         .filter(u => u.role === 'citizen')
         .map((u) => {
@@ -100,6 +98,7 @@ const CitizenDashboard = () => {
           return { userId: u.id, userName: u.name, points: u.points, level: u.level, reportCount };
         })
         .sort((a, b) => b.points - a.points)
+        .slice(0, 4)
         .map((e, idx) => ({ ...e, rank: idx + 1 }));
       setLeaderboard(entries);
     } catch {
