@@ -28,7 +28,21 @@ export const useAuth = () => {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [adminExists, setAdminExists] = useState(false);
+  const [adminExists, setAdminExists] = useState(true);
+
+  // Fixed single administrator for all deployments (no per-browser setup)
+  const FIXED_ADMIN = {
+    id: 'admin-fixed-0001',
+    name: 'City Administrator',
+    email: 'jubinpatel@gmail.com',
+    role: 'admin' as const,
+    city: 'Head Office',
+    points: 0,
+    level: 'Bronze' as const,
+    badges: [] as string[],
+    joinDate: '2024-01-01',
+    password: '123123',
+  } satisfies User;
 
   useEffect(() => {
     // Check for stored user session
@@ -36,14 +50,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (storedUser) {
       setUser(JSON.parse(storedUser));
     }
-    // Check if any admin user exists
-    try {
-      const usersRaw = localStorage.getItem('roadReportUsers');
-      const users: User[] = usersRaw ? JSON.parse(usersRaw) : [];
-      setAdminExists(users.some(u => u.role === 'admin'));
-    } catch {
-      setAdminExists(false);
-    }
+    // Single admin is fixed globally
+    setAdminExists(true);
     setIsLoading(false);
   }, []);
 
@@ -68,6 +76,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     const storedUsers = getStoredUsers();
 
+    // Enforce fixed admin for admin logins
+    if (role === 'admin') {
+      if (email.toLowerCase() === FIXED_ADMIN.email.toLowerCase() && password === FIXED_ADMIN.password) {
+        // Do not store fixed admin in users list; session only
+        const sessionUser: User = { ...FIXED_ADMIN };
+        setUser(sessionUser);
+        localStorage.setItem('roadReportUser', JSON.stringify(sessionUser));
+        setIsLoading(false);
+        return true;
+      }
+      setIsLoading(false);
+      return false;
+    }
+
     // Check local stored users with password match only
     const storedUser = storedUsers.find(u => 
       u.email.toLowerCase() === email.toLowerCase() && (role ? u.role === role : true)
@@ -86,6 +108,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signup: AuthContextType['signup'] = async ({ name, email, password, role, city }) => {
     setIsLoading(true);
     await new Promise(resolve => setTimeout(resolve, 800));
+
+    // Prevent creating any new admin users; only fixed admin exists
+    if (role === 'admin') {
+      setIsLoading(false);
+      throw new Error('Admin is managed centrally');
+    }
 
     // Ensure unique email across stored users
     const lower = email.toLowerCase();
@@ -119,30 +147,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // One-time admin creation (only if no admin exists)
-  const createAdmin: AuthContextType['createAdmin'] = async ({ name, email, password, city }) => {
-    setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 600));
-    const users = getStoredUsers();
-    if (users.some(u => u.role === 'admin')) {
-      setIsLoading(false);
-      throw new Error('Admin already set up');
-    }
-    if (users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
-      setIsLoading(false);
-      throw new Error('Email already in use');
-    }
-    const admin: User = {
-      id: crypto.randomUUID(),
-      name, email, role: 'admin', city,
-      points: 0, level: 'Bronze', badges: [], joinDate: new Date().toISOString().slice(0,10), password,
-    };
-    users.push(admin);
-    setStoredUsers(users);
-    setUser(admin);
-    localStorage.setItem('roadReportUser', JSON.stringify(admin));
-    setAdminExists(true);
-    setIsLoading(false);
-    return admin;
+  const createAdmin: AuthContextType['createAdmin'] = async () => {
+    // Disallow runtime admin creation; one fixed admin only
+    throw new Error('Admin is fixed and cannot be created');
   };
 
   // Simple password reset using localStorage token (demo-only)
